@@ -248,7 +248,7 @@ def input_pad(inputs,labels,tokenizer,LENGTH):
 
     return torch.tensor(inputs), torch.tensor(labels)
 
-def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_info, task_name, token_to_word_to_phrase_, mlm_list, args) -> Tuple[torch.Tensor, torch.Tensor]:
+def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_info, task_name, token_to_word_to_phrase_, token_to_phrase, mlm_list, args) -> Tuple[torch.Tensor, torch.Tensor]:
     """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
     mlm_mask = task_info[task_name]["mlm_mask"]# default 0.8
     mlm_random = task_info[task_name]["mlm_random"]# default 0.5
@@ -293,6 +293,9 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
 
     token_to_word_to_phrase.insert(0, 0)#<s>
     token_to_word_to_phrase.append(0)
+
+    token_to_phrase.insert(0, 0)#<s>
+    token_to_phrase.append(0)
 
     # print("token_to_phrase", len(token_to_phrase))
     # print(token_to_phrase)
@@ -359,8 +362,9 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
         for score in for_probability_matrix:
             probability_matrix.append(masking_probability(score, min_score, max_score, mean_score))
     '''
-    #v6.3
+    #v6.3 定義通り正しい
 
+    '''
 
     for_probability_matrix = []
     wordscore = []
@@ -407,7 +411,28 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     probability_matrix = []
     for score in for_probability_matrix:
         probability_matrix.append(masking_probability(score, min_score, max_score, mean_score, mlm_probability))
+    '''
+    #v6.1 を.4としてもういちど
+    min_score = min(m_score)
+    max_score = max(m_score)
+    mean_score = sum(m_score)/len(m_score)
 
+    for_probability_matrix = []
+    for i in token_to_phrase:
+        if type(i) == list:
+            for n,j in enumerate(i):
+                if n == 0:
+                    idx = c
+                for_probability_matrix.append(max(m_score[idx:idx+len(i)]))
+                c += 1
+
+        else:
+            for_probability_matrix.append(0.15)       
+            c+=1
+
+    probability_matrix = []
+    for score in for_probability_matrix:
+        probability_matrix.append(masking_probability(score, min_score, max_score, mean_score,mlm_probability))
 
 
     # probability_matrix.append(0.15)
@@ -977,7 +1002,7 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
         # try:
         #     print("Good!")
         try:
-            input_, label = mask_tokens_PRP(sent_, tokenizer, task_info, task_name, token_to_word_to_phrase, mlm_list, args)# if args.mlm else (batch, batch)
+            input_, label = mask_tokens_PRP(sent_, tokenizer, task_info, task_name, token_to_word_to_phrase, token_to_phrase, mlm_list, args)# if args.mlm else (batch, batch)
         except Exception as e:
             print(e)
             input_, label = mask_tokens(sent_, tokenizer, args)
