@@ -415,20 +415,20 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     #v6.1 を.4としてもういちど
     min_score = min(m_score)
     max_score = max(m_score)
-    mean_score = -1#sum(m_score)/len(m_score) #noPhrase の v2
+    mean_score = -1.0 #sum(m_score)/len(m_score)
 
-    for_probability_matrix = m_score
-    # for i in token_to_phrase:
-    #     if type(i) == list:
-    #         for n,j in enumerate(i):
-    #             if n == 0:
-    #                 idx = c
-    #             for_probability_matrix.append(max(m_score[idx:idx+len(i)]))
-    #             c += 1
+    for_probability_matrix = []
+    for i in token_to_phrase:
+        if type(i) == list:
+            for n,j in enumerate(i):
+                if n == 0:
+                    idx = c
+                for_probability_matrix.append(max(m_score[idx:idx+len(i)]))
+                c += 1
 
-    #     else:
-    #         for_probability_matrix.append(0.15)       
-    #         c+=1
+        else:
+            for_probability_matrix.append(0.15)       
+            c+=1
 
     probability_matrix = []
     for score in for_probability_matrix:
