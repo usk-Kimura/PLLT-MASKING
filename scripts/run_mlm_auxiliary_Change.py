@@ -275,7 +275,7 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     #Word_masking (Our Method)#どうやって複数のタスクを作る？
     labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_word, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=word_mask_probability)
     #Phrase_masking (Our Method)
-    labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_phrase, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=phrase_mask_probability)
+    # labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_phrase, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=phrase_mask_probability)
 
     
     # 10% of the time, we replace masked input tokens with random word
@@ -284,8 +284,8 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     #Word_random (Our Method)
     _, _, indices_random, _ = anything_masking(tokenizer, token_to_word, labels_, labels, masked_indices, indices_random, inputs, mask_probability=word_mask_probability)
     #Phrase_random (Our Method)
-    _, _, indices_random, _ = anything_masking(tokenizer, token_to_phrase, labels_, labels, masked_indices, indices_random, inputs, mask_probability=phrase_mask_probability)
-  
+    # _, _, indices_random, _ = anything_masking(tokenizer, token_to_phrase, labels_, labels, masked_indices, indices_random, inputs, mask_probability=phrase_mask_probability)
+    #whole word masking
 
 
     random_words = torch.randint(len(tokenizer), labels.shape, dtype=torch.long)
