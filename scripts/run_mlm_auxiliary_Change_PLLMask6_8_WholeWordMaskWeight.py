@@ -87,7 +87,7 @@ def tokenize_with_offsets(text, LENGTH,tokenizer):
     offsets = inputs["offset_mapping"]
     return tokens, offsets
 
-def calculate_word_level_scores(tokens, scores): #実装終了
+def calculate_word_level_scores_forWeightWord(tokens, scores): #実装終了
     word_scores, ws = [], []
     words, w = [],[]
 
@@ -137,7 +137,7 @@ def calculate_word_level_scores(tokens, scores): #実装終了
                 
         else: #前回のループでサブワード判定で，今回は別単語なので初期化
             # print("if3",token)
-            word_scores.append(sum(ws))#単語は合計　フレーズは単語数の平均
+            word_scores.append(sum(ws)/len(ws)) #word Mask 用　今回のコードだけの処理
             words.append("".join(w))
             token_to_word.append(t_to_w)
             
@@ -247,7 +247,7 @@ def input_pad(inputs,labels,tokenizer,LENGTH):
 
     return torch.tensor(inputs), torch.tensor(labels)
 
-def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_info, task_name, token_to_word_to_phrase_, token_to_phrase,token_to_word, mlm_list, args) -> Tuple[torch.Tensor, torch.Tensor]:
+def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_info, task_name, token_to_word_to_phrase_, token_to_phrase,token_to_word, mlm_list, wordscores, args) -> Tuple[torch.Tensor, torch.Tensor]:
     """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
     mlm_mask = task_info[task_name]["mlm_mask"]# default 0.8
     mlm_random = task_info[task_name]["mlm_random"]# default 0.5
@@ -285,7 +285,7 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     # print("m_score",len(m_score))
     # print(m_score)
 
-    probability_matrix = torch.full(labels.shape, mlm_probability) #change Our Method
+    # probability_matrix = torch.full(labels.shape, mlm_probability) #change Our Method
     c = 0
     # print("token_to_phrase")
     # print(token_to_phrase)
@@ -295,218 +295,57 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
 
     token_to_phrase.insert(0, 0)#<s>
     token_to_phrase.append(0)
+    token_to_word.insert(0, 0)#<s>
+    token_to_word.append(0)
 
-    # print("token_to_phrase", len(token_to_phrase))
-    # print(token_to_phrase)
-
-    '''
-    v6.1 一番いいけど，よく分からない方法になってる　マックス
-        min_score = min(m_score)
-        max_score = max(m_score)
-        mean_score = sum(m_score)/len(m_score)
-
-        for_probability_matrix = []
-        for i in token_to_phrase:
-            if type(i) == list:
-                for n,j in enumerate(i):
-                    if n == 0:
-                        idx = c
-                    for_probability_matrix.append(max(m_score[idx:idx+len(i)]))
-                    c += 1
-
-            else:
-                for_probability_matrix.append(0.15)       
-                c+=1
-
-        probability_matrix = []
-        for score in for_probability_matrix:
-            probability_matrix.append(masking_probability(score, min_score, max_score, mean_score))
-    '''
-
-    '''
-    v6.2
-        for_probability_matrix = []
-        for i in token_to_word_to_phrase:
-            if type(i) == list:
-                if contains_list(i):#フレーズを構成するある単語が複数のサブワードに分割される
-                    phrase_score = []
-                    for n,j in enumerate(i):
-                        if type(j) == list:#単語がサブワードに分割される場合は，定義に従って単語はサブワードの合計値を算出
-                            for num, subword in enumerate(j):
-                                if num == 0:
-                                    idx = c
-                                phrase_score.append(sum(m_score[idx:idx+len(j)]))
-                                c += 1
-                        else:
-                            phrase_score.append(m_score[c])
-                            c += 1
-                    phrase_score = [max(phrase_score)] * len(phrase_score) #単語のスコアにしたので，後は最大値をフレーズのスコアにする
-                    for_probability_matrix.extend(phrase_score)
-
-                else:#単語のみでフレーズが構成される
-                    for n,j in enumerate(i):
-                        if n == 0:
-                            idx = c
-                        for_probability_matrix.append(max(m_score[idx:idx+len(i)]))
-                        c += 1
-            else:#フレーズじゃなければ
-                for_probability_matrix.append(0.15)       
-                c+=1
-
-        min_score = min(for_probability_matrix)
-        max_score = max(for_probability_matrix)
-        mean_score = sum(for_probability_matrix)/len(for_probability_matrix)
-
-        probability_matrix = []
-        for score in for_probability_matrix:
-            probability_matrix.append(masking_probability(score, min_score, max_score, mean_score))
-    '''
-    #v6.3 定義通り正しい
+    wordscores.insert(0, 0)#<s>
+    wordscores.append(0)
 
 
+    wordscores_ = []
+    for i in wordscores:
+        wordscores_.append(i * -1)
 
-    # for_probability_matrix = []
-    # wordscore = []
-    # for i in token_to_word_to_phrase:
-    #     if type(i) == list:
-    #         if contains_list(i):#フレーズを構成するある単語が複数のサブワードに分割される
-    #             phrase_score = []
-    #             for n,j in enumerate(i):
-    #                 if type(j) == list:#単語がサブワードに分割される場合は，定義に従って単語はサブワードの合計値を算出
-    #                     for num, subword in enumerate(j):
-    #                         if num == 0:
-    #                             idx = c
-    #                             wordscore.append(sum(m_score[idx:idx+len(j)]))
-    #                         phrase_score.append(sum(m_score[idx:idx+len(j)]))
-    #                         c += 1
-    #                 else:
-    #                     phrase_score.append(m_score[c])
-    #                     wordscore.append(m_score[c])
+    min_score = min(wordscores_)
+    max_score = max(wordscores_)
+    mean_score = sum(wordscores_)/len(wordscores_)
 
-    #                     c += 1
-    #             # phrase_score = [max(phrase_score)] * len(phrase_score) #単語のスコアにしたので，後は最大値をフレーズのスコアにする
-    #             for_probability_matrix.extend(phrase_score)
+    probability_matrix = []
+    for score in wordscores_:
+        probability_matrix.append(masking_probability(score, min_score, max_score, mean_score,mlm_probability))
 
-    #         else:#単語のみでフレーズが構成される
-    #             for n,j in enumerate(i):
-    #                 if n == 0:
-    #                     idx = c
-
-    #                 for_probability_matrix.append(sum(m_score[idx:idx+len(i)]))
-    #                 wordscore.append(m_score[c])
-
-    #                 c += 1
-    #     else:#フレーズじゃなければ
-    #         for_probability_matrix.append(m_score[c])#6.5 確率に直した #.append(mlm_probability)   
-    #         wordscore.append(m_score[c])    
-    #         c+=1
-
-    #v6.5 sum とるのも max とるのも実質変わらないのでMLMスコアをそのまま使用しない．PMI Maskingと同様にフレーズをユニットとして扱う
-    #anythingmask は最初のトークン確率だけ見てる．
+    for l in range(len(labels.tolist()[0])-len(probability_matrix)):
+        probability_matrix.append(0)
 
 
-    # for_probability_matrix = m_score
-
-    # min_score = min(wordscore)
-    # max_score = max(wordscore)
-    # mean_score = sum(wordscore)/len(wordscore)
-
-    # min_score = min(for_probability_matrix)
-    # max_score = max(for_probability_matrix)
-    # mean_score = sum(for_probability_matrix)/len(for_probability_matrix)
-
-
-    # m_score = []
-    # for score in for_probability_matrix:
-    #     m_score.append(masking_probability(score, min_score, max_score, mean_score, mlm_probability))
-
-
-    # #6.5
-    # for_probability_matrix = []
-    # wordscore = []
-    # for i in token_to_word_to_phrase:
-    #     if type(i) == list:
-    #         if contains_list(i):#フレーズを構成するある単語が複数のサブワードに分割される
-    #             phrase_score = []
-    #             for n,j in enumerate(i):
-    #                 if type(j) == list:#単語がサブワードに分割される場合は，定義に従って単語はサブワードの合計値を算出
-    #                     for num, subword in enumerate(j):
-    #                         if num == 0:
-    #                             idx = c
-    #                             wordscore.append(sum(m_score[idx:idx+len(j)]) / len(j))
-    #                         phrase_score.append(sum(m_score[idx:idx+len(j)]) / len(j))
-    #                         c += 1
-    #                 else:
-    #                     phrase_score.append(m_score[c])
-    #                     wordscore.append(m_score[c])
-
-    #                     c += 1
-    #             phrase_score = [sum(phrase_score) / len(phrase_score)] * len(phrase_score) #[max(phrase_score)] * len(phrase_score) #単語のスコアにしたので，後は最大値をフレーズのスコアにする
-    #             for_probability_matrix.extend(phrase_score)
-
-    #         else:#単語のみでフレーズが構成される
-    #             for n,j in enumerate(i):
-    #                 if n == 0:
-    #                     idx = c
-
-    #                 for_probability_matrix.append(sum(m_score[idx:idx+len(i)]) / len(i))
-    #                 wordscore.append(m_score[c])
-
-    #                 c += 1
-    #     else:#フレーズじゃなければ
-    #         for_probability_matrix.append(m_score[c])#6.5 確率に直した #.append(mlm_probability)   
-    #         wordscore.append(m_score[c])    
-    #         c+=1    
-
-
-    # probability_matrix = for_probability_matrix
-    #v6.1 を.4としてもういちど
-    # min_score = min(m_score)
-    # max_score = max(m_score)
-    # mean_score = sum(m_score)/len(m_score)
-
-    # for_probability_matrix = []
-    # for i in token_to_phrase:
-    #     if type(i) == list:
-    #         for n,j in enumerate(i):
-    #             if n == 0:
-    #                 idx = c
-    #             for_probability_matrix.append(max(m_score[idx:idx+len(i)]))
-    #             c += 1
-
-    #     else:
-    #         for_probability_matrix.append(0.15)       
-    #         c+=1
-
-    # probability_matrix = []
-    # for score in for_probability_matrix:
-    #     probability_matrix.append(masking_probability(score, min_score, max_score, mean_score,mlm_probability))
-
-
-    # probability_matrix.append(0.15)
-
-    #6.6 token のみ
-    # min_score = min(m_score)
-    # max_score = max(m_score)
-    # mean_score = sum(m_score)/len(m_score)
-
-
-    # probability_matrix = []
-    # for score in for_probability_matrix:
-    #     probability_matrix.append(masking_probability(score, min_score, max_score, mean_score,mlm_probability))
-
-    # probability_matrix = torch.tensor([probability_matrix])
-
+    probability_matrix = torch.tensor([probability_matrix])
 
 
     special_tokens_mask = [
         tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
     ]
     probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=torch.bool), value=0.0)
+
+
+
+
+
     if tokenizer._pad_token is not None:
         padding_mask = labels.eq(tokenizer.pad_token_id)
         probability_matrix.masked_fill_(padding_mask, value=0.0)
     masked_indices = torch.bernoulli(probability_matrix).bool()
+
+    masked_indices_ = []
+    for token, mask in zip(token_to_word, masked_indices[0]):
+        if type(token)==list:
+            masks = [mask] * len(token)
+            masked_indices_.extend(masks)
+        else:
+            masked_indices_.append(mask)
+
+
+    masked_indices_ = torch.tensor([masked_indices_])
+
     labels[~masked_indices] = -100  # We only compute loss on masked tokens
     
     # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
@@ -516,7 +355,7 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     # #Word_masking (Our Method)#どうやって複数のタスクを作る？ v6.5
     # labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_word, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=word_mask_probability)
     # #Phrase_masking (Our Method)
-    labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_phrase, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=phrase_mask_probability)
+    # labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_phrase, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=phrase_mask_probability)
     #外れ値のフレーズみマスク
     
     # 10% of the time, we replace masked input tokens with random word
@@ -659,7 +498,7 @@ def remove_phrases_randomly(phraseidx, groups):
 
 
 
-def WS_PS(words, wordscores, phrase_dic):
+def WS_PS(words, wordscores, phrase_dic, token_to_word):
 
     phidxlist = []
     for phidx in list(phrase_dic.values()):
@@ -672,21 +511,28 @@ def WS_PS(words, wordscores, phrase_dic):
 
     phrases = []
     phs = []
-    
+    c = 0
     for i,score in enumerate(wordscores):
         # print(phrases)
         if i in phidxlist:
+            
             for pidx in phrase_idx:
                 if i in list(range(pidx[0],pidx[1])):
                     phl.append(score)
                     phs.append(words[i])
+                    if type(token_to_word[i]) == list:
+                        c += len(token_to_word[i])
+                    else:
+                        c += 1
                     
                 if i+1 == pidx[1]:
-                    phsum = sum(phl)/len(phl) #単語数の平均 #トークン数の平均であるべき 修正要件
+                    phsum = sum(phl)/c #トークン数の平均であるべき 修正した
                     phrase_pll_max.append(phsum)
                     phl = []
                     phrases.append(phs)
                     phs = []
+                    c = 0
+
 
          
         
@@ -989,7 +835,7 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
             tokens = tokens[1:-1]# <s>対策
             # print(tokens)
             scores =  score # Use actual MLM scores here
-            words,wordscores,token_to_word = calculate_word_level_scores(tokens,scores)
+            words,wordscores,token_to_word = calculate_word_level_scores_forWeightWord(tokens,scores)
 
 
         # print("token_to_word")
@@ -1014,7 +860,7 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
         phrase_idx = dict(sorted(phrase_idx.items(), key=lambda item: item[1][0]))
 
 
-        phrases, phrase_scores = WS_PS(words, wordscores, phrase_idx) #トークン数の平均
+        phrases, phrase_scores = WS_PS(words, wordscores, phrase_idx,token_to_word) #トークン数の平均
 
         ps = np.array(phrase_scores) * -1
         phrase_outlier, phrase_Mask_idx = Smirnov_Grubbs(ps,alpha=0.05)
@@ -1140,10 +986,12 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
 
 
 
+
+
         # try:
         #     print("Good!")
         try:
-            input_, label = mask_tokens_PRP(sent_, tokenizer, task_info, task_name, token_to_word_to_phrase, token_to_phrase, token_to_word, mlm_list, args)# if args.mlm else (batch, batch)
+            input_, label = mask_tokens_PRP(sent_, tokenizer, task_info, task_name, token_to_word_to_phrase, token_to_phrase, token_to_word, mlm_list, wordscores, args)# if args.mlm else (batch, batch)
         except Exception as e:
             print(e)
             input_, label = mask_tokens(sent_, tokenizer, args)

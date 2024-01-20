@@ -486,6 +486,10 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     # probability_matrix.append(0.15)
 
     #6.6 token のみ
+
+    for_probability_matrix = m_score
+
+
     min_score = min(m_score)
     max_score = max(m_score)
     mean_score = sum(m_score)/len(m_score)

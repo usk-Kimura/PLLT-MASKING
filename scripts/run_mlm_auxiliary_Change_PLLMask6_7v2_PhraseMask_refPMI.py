@@ -659,7 +659,7 @@ def remove_phrases_randomly(phraseidx, groups):
 
 
 
-def WS_PS(words, wordscores, phrase_dic):
+def WS_PS(words, wordscores, phrase_dic, token_to_word):
 
     phidxlist = []
     for phidx in list(phrase_dic.values()):
@@ -672,21 +672,28 @@ def WS_PS(words, wordscores, phrase_dic):
 
     phrases = []
     phs = []
-    
+    c = 0
     for i,score in enumerate(wordscores):
         # print(phrases)
         if i in phidxlist:
+            
             for pidx in phrase_idx:
                 if i in list(range(pidx[0],pidx[1])):
                     phl.append(score)
                     phs.append(words[i])
+                    if type(token_to_word[i]) == list:
+                        c += len(token_to_word[i])
+                    else:
+                        c += 1
                     
                 if i+1 == pidx[1]:
-                    phsum = sum(phl)/len(phl) #単語数の平均 #トークン数の平均であるべき 修正要件
+                    phsum = sum(phl)/c #トークン数の平均であるべき 修正した
                     phrase_pll_max.append(phsum)
                     phl = []
                     phrases.append(phs)
                     phs = []
+                    c = 0
+
 
          
         
@@ -1014,7 +1021,7 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
         phrase_idx = dict(sorted(phrase_idx.items(), key=lambda item: item[1][0]))
 
 
-        phrases, phrase_scores = WS_PS(words, wordscores, phrase_idx) #トークン数の平均
+        phrases, phrase_scores = WS_PS(words, wordscores, phrase_idx,token_to_word) #トークン数の平均
 
         ps = np.array(phrase_scores) * -1
         phrase_outlier, phrase_Mask_idx = Smirnov_Grubbs(ps,alpha=0.05)
