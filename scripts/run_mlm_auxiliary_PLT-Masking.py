@@ -72,7 +72,7 @@ nlp = spacy.load("en_core_web_sm")
 
 pretrained_model_name = "roberta-base"
 tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name)
-mlm_model = scorer.MaskedLMScorer(pretrained_model_name, 'cuda')
+
 
 
 
@@ -87,7 +87,7 @@ def tokenize_with_offsets(text, LENGTH,tokenizer):
     offsets = inputs["offset_mapping"]
     return tokens, offsets
 
-def calculate_word_level_scores_forWeightWord(tokens, scores): #実装終了
+def calculate_word_level_scores(tokens, scores): #実装終了
     word_scores, ws = [], []
     words, w = [],[]
 
@@ -137,7 +137,7 @@ def calculate_word_level_scores_forWeightWord(tokens, scores): #実装終了
                 
         else: #前回のループでサブワード判定で，今回は別単語なので初期化
             # print("if3",token)
-            word_scores.append(sum(ws)) #word Mask 用　ドメインが異なると単語分割され，その単語を認識したいので，平均値を算出したくない
+            word_scores.append(max(ws))#change
             words.append("".join(w))
             token_to_word.append(t_to_w)
             
@@ -215,11 +215,18 @@ def anything_masking(tokenizer: PreTrainedTokenizer, token_to_word, labels_, lab
     return labels, masked_indices, indices_replaced, inputs
 
 
-def masking_probability(score, allscore):
-    # 例: スコアが平均より低い場合、確率を高める v5
-    prob = score/allscore   # 0.15はデフォルトのマスキング確率
+# def masking_probability(score, allscore):
+#     # 例: スコアが平均より低い場合、確率を高める v5
+#     prob = score/allscore   # args.mlm_pはデフォルトのマスキング確率
 
 
+#     return prob
+
+def masking_probability(score,min_score,max_score):
+    # prob = a + (score - min_score) / ((max_score-min_score)) * (b-a)   # args.mlm_pはデフォルトのマスキング確率
+    prob = (score - min_score) / (max_score-min_score)
+    # prob = score/all_score
+    # prob = 1 / (1 + np.exp(-score*a))
     return prob
 
 '''
@@ -247,7 +254,42 @@ def input_pad(inputs,labels,tokenizer,LENGTH):
 
     return torch.tensor(inputs), torch.tensor(labels)
 
-def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_info, task_name, token_to_word_to_phrase_, token_to_phrase,token_to_word, mlm_list, wordscores, args) -> Tuple[torch.Tensor, torch.Tensor]:
+def distribute_excess(values, target_avg):
+    n = len(values)
+    excess = sum(value - 1 for value in values if value > 1)
+    under_count = sum(1 for value in values if value < 1)
+
+    # 1を超えていない要素に超過分を分配
+    if under_count > 0 and excess > 0:
+        for i in range(n):
+            if values[i] < 1:
+                distribute_amount = min(excess / under_count, 1 - values[i])
+                values[i] += distribute_amount
+                excess -= distribute_amount
+
+    # 再帰的に処理を続ける条件
+    if any(value > 1 for value in values):
+        for i in range(n):
+            if values[i] > 1:
+                values[i] = 1  # 1を超える値を1に修正
+        distribute_excess(values, target_avg)  # 再帰呼び出し
+
+def adjust_average_recursive(values, target_avg):
+    n = len(values)
+    current_avg = sum(values) / n
+    multiplier = target_avg / current_avg
+
+    # 配列の全要素に定数倍率を適用し、1を超えないように調整
+    for i in range(n):
+        values[i] = min(values[i] * multiplier, 1.0)
+
+    # 1を超える要素の超過分を分配
+    distribute_excess(values, target_avg)
+
+    return values
+
+
+def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_info, task_name, token_to_word_to_phrase_, token_to_phrase,token_to_word, mlm_list, args) -> Tuple[torch.Tensor, torch.Tensor]:
     """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
     mlm_mask = task_info[task_name]["mlm_mask"]# default 0.8
     mlm_random = task_info[task_name]["mlm_random"]# default 0.5
@@ -266,7 +308,7 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     labels = inputs.clone()
     labels_ = inputs.clone()
     # We sample a few tokens in each sequence for masked-LM training
-    # (with probability args.mlm_probability defaults to 0.15 in Bert/RoBERTa)
+    # (with probability args.mlm_probability defaults to args.mlm_p in Bert/RoBERTa)
 
     # print("inputs")
     # print(inputs.size())
@@ -285,7 +327,7 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     # print("m_score",len(m_score))
     # print(m_score)
 
-    # probability_matrix = torch.full(labels.shape, mlm_probability) #change Our Method
+    #torch.full(labels.shape, mlm_probability) #change Our Method
     c = 0
     # print("token_to_phrase")
     # print(token_to_phrase)
@@ -295,70 +337,45 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
 
     token_to_phrase.insert(0, 0)#<s>
     token_to_phrase.append(0)
-    token_to_word.insert(0, 0)#<s>
-    token_to_word.append(0)
-
-    # wordscores.insert(0, 0)#<s>
-    # wordscores.append(0)
-
-
-    # wordscores_ = []
-    # for i in wordscores:
-    #     wordscores_.append(i * -1)
-
-    # allscore = sum(wordscores_)
-
-
-    # probability_matrix = []
-    # for score in wordscores_:
-    #     probability_matrix.append(masking_probability(score, allscore))
-
-    # for l in range(len(labels.tolist()[0])-len(probability_matrix)):
-    #     probability_matrix.append(0)
-
-
-    # probability_matrix = torch.tensor([probability_matrix])
-
-
-    # special_tokens_mask = [
-    #     tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
-    # ]
-    # probability_matrix.masked_fill_(torch.tensor(special_tokens_mask, dtype=torch.bool), value=0.0)
 
 
 
-
-
-    # if tokenizer._pad_token is not None:
-    #     padding_mask = labels.eq(tokenizer.pad_token_id)
-    #     probability_matrix.masked_fill_(padding_mask, value=0.0)
-    # masked_indices = torch.bernoulli(probability_matrix).bool()
-
-    # masked_indices_ = []
-    # for token, mask in zip(token_to_word, masked_indices[0]):
-    #     if type(token)==list:
-    #         masks = [mask] * len(token)
-    #         masked_indices_.extend(masks)
-    #     else:
-    #         masked_indices_.append(mask)
+    #6.6 token のみ
 
     for_probability_matrix = m_score
 
 
-    # min_score = min(m_score)
-    # max_score = max(m_score)
-    # mean_score = sum(m_score)/len(m_score)
 
-    # masked_indices_ = torch.tensor([masked_indices_])
+    # scores_ = []
+    # for relativization in for_probability_matrix: #相対割合
+    #     scores_.append(relativization/sum(for_probability_matrix))
 
-
-    allscore = sum(for_probability_matrix)
+    min_score = min(for_probability_matrix)
+    max_score = max(for_probability_matrix)
+    all_score = sum(for_probability_matrix)
 
     probability_matrix = []
     for score in for_probability_matrix:
-        probability_matrix.append(masking_probability(score, allscore))
+        probability_matrix.append(masking_probability(score, min_score,max_score)) #シグモイド関数にあてる，ゲインは10
+
+    # scale = args.mlm_p/(sum(probability_matrix)/len(probability_matrix))    
+
+
+    # m_ = []
+    # for i in probability_matrix:
+    #     m_.append(i*scale)
+    probability_matrix_ = probability_matrix[1:-1].copy()
+    m_ = adjust_average_recursive(probability_matrix_, args.mlm_p)
+
+    m_.insert(0, 0)#<s>
+    m_.append(0)
+
+    probability_matrix = m_.copy()
 
     probability_matrix = torch.tensor([probability_matrix])
+
+
+
     special_tokens_mask = [
         tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
     ]
@@ -367,10 +384,6 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
         padding_mask = labels.eq(tokenizer.pad_token_id)
         probability_matrix.masked_fill_(padding_mask, value=0.0)
     masked_indices = torch.bernoulli(probability_matrix).bool()
-
-
-
-
     labels[~masked_indices] = -100  # We only compute loss on masked tokens
     
     # 80% of the time, we replace masked input tokens with tokenizer.mask_token ([MASK])
@@ -378,10 +391,10 @@ def mask_tokens_PRP(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, task_i
     inputs[indices_replaced] = tokenizer.convert_tokens_to_ids(tokenizer.mask_token)
 
     # #Word_masking (Our Method)#どうやって複数のタスクを作る？ v6.5
-    labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_word, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=word_mask_probability)
+    # labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_word, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=word_mask_probability)
     # #Phrase_masking (Our Method)
     # labels, masked_indices, indices_replaced, inputs = anything_masking(tokenizer, token_to_phrase, labels_, labels, masked_indices, indices_replaced, inputs, mask_probability=phrase_mask_probability)
-    #外れ値のフレーズみマスク
+
     
     # 10% of the time, we replace masked input tokens with random word
     indices_random = torch.bernoulli(torch.full(labels.shape, mlm_random)).bool() & masked_indices & ~indices_replaced
@@ -420,7 +433,7 @@ def contains_list(lst):
 #     labels = inputs.clone()
 #     labels_ = inputs.clone()
 #     # We sample a few tokens in each sequence for masked-LM training
-#     # (with probability args.mlm_probability defaults to 0.15 in Bert/RoBERTa)
+#     # (with probability args.mlm_probability defaults to args.mlm_p in Bert/RoBERTa)
 #     probability_matrix = torch.full(labels.shape, args.mlm_probability)
 #     special_tokens_mask = [
 #         tokenizer.get_special_tokens_mask(val, already_has_special_tokens=True) for val in labels.tolist()
@@ -481,49 +494,7 @@ def find_phrase_positions(text, phrase_list):
     positions = {phrase: find_indices(phrase) for phrase in phrase_list}
     return positions
 
-
-# 包含関係を見つける関数
-def find_overlaps(phraseidx):
-    overlaps = {}
-    for key1, (start1, end1) in phraseidx.items():
-        for key2, (start2, end2) in phraseidx.items():
-            if key1 != key2 and start1 <= start2 and end1 >= end2:
-                if key1 in overlaps:
-                    overlaps[key1].add(key2)
-                else:
-                    overlaps[key1] = {key2}
-    return overlaps
-
-# 包含グループを作成する関数
-def create_inclusion_groups(overlaps):
-    groups = []
-    for parent, children in overlaps.items():
-        found = False
-        for group in groups:
-            if parent in group or not children.isdisjoint(group):
-                group.update(children)
-                group.add(parent)
-                found = True
-                break
-        if not found:
-            new_group = set(children)
-            new_group.add(parent)
-            groups.append(new_group)
-    return groups
-
-# ランダムにフレーズを削除する関数
-def remove_phrases_randomly(phraseidx, groups):
-    for group in groups:
-        to_keep = random.choice(list(group))
-        for phrase in group:
-            if phrase != to_keep:
-                del phraseidx[phrase]
-
-
-
-
-
-def WS_PS(words, wordscores, phrase_dic, token_to_word):
+def WS_PS(words, wordscores, phrase_dic):
 
     phidxlist = []
     for phidx in list(phrase_dic.values()):
@@ -536,40 +507,24 @@ def WS_PS(words, wordscores, phrase_dic, token_to_word):
 
     phrases = []
     phs = []
-    c = 0
+    
     for i,score in enumerate(wordscores):
-        # print(phrases)
         if i in phidxlist:
-            
             for pidx in phrase_idx:
                 if i in list(range(pidx[0],pidx[1])):
                     phl.append(score)
                     phs.append(words[i])
-                    if type(token_to_word[i]) == list:
-                        c += len(token_to_word[i])
-                    else:
-                        c += 1
-                    
                 if i+1 == pidx[1]:
-                    phsum = sum(phl)/c #トークン数の平均であるべき 修正した
+                    phsum = max(phl)#sum(phl)/len(phl) #平均
                     phrase_pll_max.append(phsum)
                     phl = []
                     phrases.append(phs)
                     phs = []
-                    c = 0
-
-
-         
-        
         else:
             phrase_pll_max.append(score)
             phrases.append(words[i])
     
     return phrases, phrase_pll_max        
-
-
-
-
 
 def func_tau(x, alpha):
     n = x.size
@@ -782,8 +737,8 @@ def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> T
     labels = inputs.clone()
     # labels = torch.tensor([labels.tolist()])
     # We sample a few tokens in each sequence for masked-LM training
-    # (with probability args.mlm_probability defaults to 0.15 in Bert/RoBERTa)
-    probability_matrix = torch.full(labels.shape, 0.15)#args.mask_probability
+    # (with probability args.mlm_probability defaults to args.mlm_p in Bert/RoBERTa)
+    probability_matrix = torch.full(labels.shape, args.mlm_p)#args.mask_probability
     
 
     special_tokens_mask = [
@@ -819,6 +774,7 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
     inputs_ = []
     labels_ = []
     # print(batch)
+    mlm_model = scorer.MaskedLMScorer(pretrained_model_name, 'cuda')
     for sent in batch:
         # sent_ = sent.clone()
         LENGTH = args.block_size
@@ -860,7 +816,7 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
             tokens = tokens[1:-1]# <s>対策
             # print(tokens)
             scores =  score # Use actual MLM scores here
-            words,wordscores,token_to_word = calculate_word_level_scores_forWeightWord(tokens,scores)
+            words,wordscores,token_to_word = calculate_word_level_scores(tokens,scores)
 
 
         # print("token_to_word")
@@ -870,47 +826,13 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
         phrase_idx = find_phrase_positions(text,phrase_list)
         # print(words)
         # phrase_idx
-
-
-        # 包含関係の検出
-        overlaps = find_overlaps(phrase_idx)
-
-        # 包含グループの作成
-        inclusion_groups = create_inclusion_groups(overlaps)
-
-        # ランダムにフレーズを削除
-        remove_phrases_randomly(phrase_idx, inclusion_groups)
-
-        # 最初のインデックスで並び替え
-        phrase_idx = dict(sorted(phrase_idx.items(), key=lambda item: item[1][0]))
-
-
-        phrases, phrase_scores = WS_PS(words, wordscores, phrase_idx,token_to_word) #トークン数の平均
+        phrases, phrase_scores = WS_PS(words, wordscores, phrase_idx)
 
         ps = np.array(phrase_scores) * -1
         phrase_outlier, phrase_Mask_idx = Smirnov_Grubbs(ps,alpha=0.05)
-        # ws = np.array(wordscores) * -1
-        # word_outlier, word_Mask_idx = Smirnov_Grubbs(ws,alpha=0.05)
+        ws = np.array(wordscores) * -1
+        word_outlier, word_Mask_idx = Smirnov_Grubbs(ws,alpha=0.05)
 
-
-        phrase_idx_ = {}
-        #外れ値のフレーズ
-        for p in phrase_Mask_idx:
-            candidate = phrases[p]
-            if type(candidate)==list:
-                candidate = [c.replace('Ġ', '') for c in candidate]
-                candidate = " ".join(candidate)
-                try:
-                    phrase_idx_[candidate] = phrase_idx[candidate]
-                except:
-                    pass
-        p_idx = list(phrase_idx_.values())
-
-        # print(phrase_idx_)
-        try:
-            a = p_idx[0][0]
-        except:
-            p_idx=[(-100, -98)]
 
 
         word_to_phrase = []
@@ -920,9 +842,13 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
         cnt = 0
         phrase_length = 100
 
+        p_idx = list(phrase_idx.values())
 
+        # print("phrase_idx")
+        # print(phrase_idx)
 
-
+        # print("token_to_word")
+        # print(token_to_word)
 
         ttw_dic = {}
         for n,i in enumerate(token_to_word):
@@ -1011,12 +937,10 @@ def run_batch(model, batch, tokenizer, args, task_name, try_again=True):
 
 
 
-
-
         # try:
         #     print("Good!")
         try:
-            input_, label = mask_tokens_PRP(sent_, tokenizer, task_info, task_name, token_to_word_to_phrase, token_to_phrase, token_to_word, mlm_list, wordscores, args)# if args.mlm else (batch, batch)
+            input_, label = mask_tokens_PRP(sent_, tokenizer, task_info, task_name, token_to_word_to_phrase, token_to_phrase, token_to_word, mlm_list, args)# if args.mlm else (batch, batch)
         except Exception as e:
             print(e)
             input_, label = mask_tokens(sent_, tokenizer, args)
@@ -1464,7 +1388,7 @@ def get_args():
         "--mlm", action="store_true", help="Train with masked-language modeling loss instead of language modeling."
     )
     # parser.add_argument(
-    #     "--mlm_probability", type=float, default=0.15, help="Ratio of tokens to mask for masked language modeling loss"
+    #     "--mlm_probability", type=float, default=args.mlm_p, help="Ratio of tokens to mask for masked language modeling loss"
     # )
 
     parser.add_argument(
@@ -1579,6 +1503,8 @@ def get_args():
     parser.add_argument("--mlm_probability", required=True, nargs="*", type=float, help='a list of mask_probability') 
     parser.add_argument("--mlm_mask", required=True, nargs="*", type=float, help='a list of mlm_mask_probability') 
     parser.add_argument("--mlm_random", required=True, nargs="*", type=float, help='a list of mlm_random_probability') 
+    parser.add_argument("--mlm_p", type=float, default=0.15) 
+    parser.add_argument("--gain", type=float, default=10.0) 
 
 
     add_config_args(parser)
